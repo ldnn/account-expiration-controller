@@ -5,4 +5,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: kscharbor-51acb8ad.ecis.huabei-3.cmecloud.cn/alyx/ksdevp/account-expiration-controller
-  newTag: v0.0.2
+  newTag: v0.1.0

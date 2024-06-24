@@ -47,7 +47,7 @@ type UserReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.14.4/pkg/reconcile
 func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	log := log.FromContext(ctx)
 
 	// TODO(user): your logic here
 	user := &v1alpha2.User{}
@@ -69,6 +69,7 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 				if err := r.Update(ctx, user); err != nil {
 					return ctrl.Result{}, err
 				}
+				log.V(1).Info("User is disabled: ", "username", uName)
 			}
 		case !uLastTransitionTime.IsZero() && uLastLoginTime.IsZero():
 			switch {
@@ -78,12 +79,14 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 					return ctrl.Result{}, err
 
 				}
+				log.V(1).Info("User is disabled: ", "username", uName)
 			case uLastTransitionTime.AddDate(0, 0, 7).Before(time.Now()) && !uCreationTimestamp.Equal(uLastTransitionTime.Time):
 				if uCreationTimestamp.AddDate(0, 3, 0).Before(time.Now()) {
 					user.Status.State = "Disabled"
 					if err := r.Update(ctx, user); err != nil {
 						return ctrl.Result{}, err
 					}
+					log.V(1).Info("User is disabled: ", "username", uName)
 				}
 			}
 		case uLastTransitionTime.IsZero() && !uLastLoginTime.IsZero():
@@ -92,12 +95,43 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 				if err := r.Update(ctx, user); err != nil {
 					return ctrl.Result{}, err
 				}
+				log.V(1).Info("User is disabled: ", "username", uName)
 			}
 		case uLastLoginTime.AddDate(0, 3, 0).Before(time.Now()) && uLastTransitionTime.AddDate(0, 0, 7).Before(time.Now()):
 			user.Status.State = "Disabled"
 			if err := r.Update(ctx, user); err != nil {
 				return ctrl.Result{}, err
 			}
+			log.V(1).Info("User is disabled: ", "username", uName)
+		}
+	}
+
+	if uState == "Disabled" && uName != "admin" {
+		switch {
+		case uLastTransitionTime.IsZero() && uLastLoginTime.IsZero():
+			if err := r.Delete(ctx, user); err != nil {
+				return ctrl.Result{}, err
+			}
+			log.V(1).Info("User is deleted: ", "username", uName)
+		case !uLastTransitionTime.IsZero() && uLastLoginTime.IsZero():
+			if uLastTransitionTime.AddDate(1, 0, 0).Before(time.Now()) {
+				if err := r.Delete(ctx, user); err != nil {
+					return ctrl.Result{}, err
+				}
+				log.V(1).Info("User is deleted: ", "username", uName)
+			}
+		case uLastTransitionTime.IsZero() && !uLastLoginTime.IsZero():
+			if uLastLoginTime.AddDate(1, 0, 0).Before(time.Now()) {
+				if err := r.Delete(ctx, user); err != nil {
+					return ctrl.Result{}, err
+				}
+				log.V(1).Info("User is deleted: ", "username", uName)
+			}
+		case uLastTransitionTime.AddDate(1, 0, 0).Before(time.Now()) || uLastLoginTime.AddDate(1, 0, 0).Before(time.Now()):
+			if err := r.Delete(ctx, user); err != nil {
+				return ctrl.Result{}, err
+			}
+			log.V(1).Info("User is deleted: ", "username", uName)
 		}
 	}
 

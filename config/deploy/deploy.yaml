@@ -32,6 +32,11 @@ spec:
       labels:
         control-plane: controller-manager
     spec:
+      volumes:
+        - name: volume-vru94m
+          secret:
+            secretName: acc-contor-secret
+            defaultMode: 420
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -68,6 +73,10 @@ spec:
           requests:
             cpu: 5m
             memory: 64Mi
+        volumeMounts:
+            - name: volume-vru94m
+              readOnly: true
+              mountPath: /etc/config
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

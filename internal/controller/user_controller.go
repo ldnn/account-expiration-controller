@@ -18,7 +18,10 @@ package controller
 
 import (
 	"context"
-	"time"
+	"fmt"
+	"os"
+
+	"path/filepath"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	v1alpha2 "kubesphere.io/api/iam/v1alpha2"
@@ -30,7 +33,10 @@ import (
 // UserReconciler reconciles a User object
 type UserReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme    *runtime.Scheme
+	AppId     string
+	AppSecret string
+	Api       string
 }
 
 //+kubebuilder:rbac:groups=user.ks.cloud.cmft,resources=users,verbs=get;list;watch;create;update;patch;delete
@@ -58,46 +64,33 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	uState := user.Status.State
 	uName := user.Name
+	log.V(1).Info("Check User : ", "username", uName)
+
+	//判断有没有电话标签
+	if _, ok := user.Labels["iam.kubesphere.io/origin-uid"]; !ok {
+		err := fmt.Errorf("无效用户: \"%v\" ，没有电话号码标签", uName)
+		log.V(3).Error(err, "请检查")
+		return ctrl.Result{}, err
+	}
+
+	uTel := user.Labels["iam.kubesphere.io/origin-uid"]
+
+	//删除在4A中失效的账号
+	if !CheckStatus(r.AppId, r.AppSecret, r.Api, uTel) {
+		log.V(1).Info("User is Invalid, delete: ", "username", uName)
+		if err := r.Delete(ctx, user); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	//取得账号的三个时间
 	uLastLoginTime := user.Status.LastLoginTime
 	uLastTransitionTime := user.Status.LastTransitionTime
 	uCreationTimestamp := user.CreationTimestamp.Time
-	if uState == "Active" && uName != "admin" {
-		switch {
-		case uLastTransitionTime.IsZero() && uLastLoginTime.IsZero():
-			if uCreationTimestamp.AddDate(0, 3, 0).Before(time.Now()) {
-				user.Status.State = "Disabled"
-				if err := r.Update(ctx, user); err != nil {
-					return ctrl.Result{}, err
-				}
-				log.V(1).Info("User is disabled: ", "username", uName)
-			}
-		case !uLastTransitionTime.IsZero() && uLastLoginTime.IsZero():
-			switch {
-			case uLastTransitionTime.AddDate(0, 3, 0).Before(time.Now()) && uCreationTimestamp.Equal(uLastTransitionTime.Time):
-				user.Status.State = "Disabled"
-				if err := r.Update(ctx, user); err != nil {
-					return ctrl.Result{}, err
 
-				}
-				log.V(1).Info("User is disabled: ", "username", uName)
-			case uLastTransitionTime.AddDate(0, 0, 7).Before(time.Now()) && !uCreationTimestamp.Equal(uLastTransitionTime.Time):
-				if uCreationTimestamp.AddDate(0, 3, 0).Before(time.Now()) {
-					user.Status.State = "Disabled"
-					if err := r.Update(ctx, user); err != nil {
-						return ctrl.Result{}, err
-					}
-					log.V(1).Info("User is disabled: ", "username", uName)
-				}
-			}
-		case uLastTransitionTime.IsZero() && !uLastLoginTime.IsZero():
-			if uLastLoginTime.AddDate(0, 3, 0).Before(time.Now()) {
-				user.Status.State = "Disabled"
-				if err := r.Update(ctx, user); err != nil {
-					return ctrl.Result{}, err
-				}
-				log.V(1).Info("User is disabled: ", "username", uName)
-			}
-		case uLastLoginTime.AddDate(0, 3, 0).Before(time.Now()) && uLastTransitionTime.AddDate(0, 0, 7).Before(time.Now()):
+	//锁定三个月不登陆的账号
+	if uState == "Active" && uName != "admin" {
+		if !CheckLock(uLastLoginTime, uLastTransitionTime, uCreationTimestamp) {
 			user.Status.State = "Disabled"
 			if err := r.Update(ctx, user); err != nil {
 				return ctrl.Result{}, err
@@ -106,28 +99,9 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		}
 	}
 
+	//删除六个月不登陆的账号
 	if uState == "Disabled" && uName != "admin" {
-		switch {
-		case uLastTransitionTime.IsZero() && uLastLoginTime.IsZero():
-			if err := r.Delete(ctx, user); err != nil {
-				return ctrl.Result{}, err
-			}
-			log.V(1).Info("User is deleted: ", "username", uName)
-		case !uLastTransitionTime.IsZero() && uLastLoginTime.IsZero():
-			if uLastTransitionTime.AddDate(1, 0, 0).Before(time.Now()) {
-				if err := r.Delete(ctx, user); err != nil {
-					return ctrl.Result{}, err
-				}
-				log.V(1).Info("User is deleted: ", "username", uName)
-			}
-		case uLastTransitionTime.IsZero() && !uLastLoginTime.IsZero():
-			if uLastLoginTime.AddDate(1, 0, 0).Before(time.Now()) {
-				if err := r.Delete(ctx, user); err != nil {
-					return ctrl.Result{}, err
-				}
-				log.V(1).Info("User is deleted: ", "username", uName)
-			}
-		case uLastTransitionTime.AddDate(1, 0, 0).Before(time.Now()) || uLastLoginTime.AddDate(1, 0, 0).Before(time.Now()):
+		if !CheckDel(uLastLoginTime, uLastTransitionTime, uCreationTimestamp) {
 			if err := r.Delete(ctx, user); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -140,6 +114,37 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *UserReconciler) SetupWithManager(mgr ctrl.Manager) error {
+
+	log := log.Log.WithName("setup")
+	secretPath := "/etc/config"
+
+	// 读取配置
+	api, err := os.ReadFile(filepath.Join(secretPath, "api"))
+	if err != nil {
+		log.Error(err, "failed to read secret file: %v")
+		os.Exit(1)
+	}
+	id, err := os.ReadFile(filepath.Join(secretPath, "id"))
+	if err != nil {
+		log.Error(err, "failed to read secret file")
+		os.Exit(1)
+	}
+
+	secret, err := os.ReadFile(filepath.Join(secretPath, "secret"))
+	if err != nil {
+		log.Error(err, "failed to read secret file")
+		os.Exit(1)
+	}
+
+	// 打印获取的数据
+	fmt.Printf("API: %s\n", api)
+	fmt.Printf("ID: %s\n", id)
+	fmt.Printf("Secret: %s\n", secret)
+
+	r.AppId = string(id)
+	r.AppSecret = string(secret)
+	r.Api = string(api)
+
 	return ctrl.NewControllerManagedBy(mgr).
 		// Uncomment the following line adding a pointer to an instance of the controlled resource as an argument
 		// For().

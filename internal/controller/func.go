@@ -154,18 +154,18 @@ func CheckLock(uLastLoginTime *v1.Time, uLastTransitionTime *v1.Time, uCreationT
 func CheckDel(uLastLoginTime *v1.Time, uLastTransitionTime *v1.Time, uCreationTimestamp time.Time) bool {
 	switch {
 	case uLastTransitionTime.IsZero() && uLastLoginTime.IsZero():
-		if uCreationTimestamp.AddDate(0, 6, 0).Before(time.Now()) {
+		if uCreationTimestamp.AddDate(0, 9, 0).Before(time.Now()) {
 			return false
 		}
 	case !uLastTransitionTime.IsZero() && uLastLoginTime.IsZero():
-		if uLastTransitionTime.AddDate(0, 6, 0).Before(time.Now()) {
+		if uLastTransitionTime.AddDate(0, 9, 0).Before(time.Now()) {
 			return false
 		}
 	case uLastTransitionTime.IsZero() && !uLastLoginTime.IsZero():
-		if uLastLoginTime.AddDate(0, 6, 0).Before(time.Now()) {
+		if uLastLoginTime.AddDate(0, 9, 0).Before(time.Now()) {
 			return false
 		}
-	case uLastTransitionTime.AddDate(0, 6, 0).Before(time.Now()) && uLastLoginTime.AddDate(0, 6, 0).Before(time.Now()):
+	case uLastTransitionTime.AddDate(0, 9, 0).Before(time.Now()) && uLastLoginTime.AddDate(0, 6, 0).Before(time.Now()):
 		return false
 	}
 

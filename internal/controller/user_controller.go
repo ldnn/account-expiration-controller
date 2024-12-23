@@ -99,13 +99,13 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		}
 	}
 
-	//删除六个月不登陆的账号
+	//删除九个月不登陆的账号
 	if uState == "Disabled" && uName != "admin" {
 		if !CheckDel(uLastLoginTime, uLastTransitionTime, uCreationTimestamp) {
 			if err := r.Delete(ctx, user); err != nil {
 				return ctrl.Result{}, err
 			}
-			log.V(1).Info("用户连续六个月不登陆, delete: ", "username", uName, "tel", uTel, "desc", user.Annotations["kubesphere.io/description"])
+			log.V(1).Info("用户连续九个月不登陆, delete: ", "username", uName, "tel", uTel, "desc", user.Annotations["kubesphere.io/description"])
 		}
 	}
 
